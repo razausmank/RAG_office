@@ -47,3 +47,28 @@ class Order(Base):
             f"<Order id={self.id} order_number={self.order_number!r} "
             f"status={self.status!r}>"
         )
+    
+    def format_order_response(self) -> str:
+        delivery_str = (
+            self.expected_delivery.strftime("%B %d, %Y")
+            if self.expected_delivery
+            else "unknown"
+        )
+
+        status_emoji: dict[str, str] = {
+            "Processing": "⏳",
+            "Shipped": "📦",
+            "Out for Delivery": "🚚",
+            "Delivered": "✅",
+            "Cancelled": "❌",
+        }
+        emoji = status_emoji.get(self.status, "ℹ️")
+
+        return (
+            f"Here's the latest info on **{self.order_number}**:\n\n"
+            f"{emoji} **Status:** {self.status}\n"
+            f"👤 **Customer:** {self.customer_name}\n"
+            f"📅 **Expected Delivery:** {delivery_str}\n\n"
+            f"Is there anything else I can help you with?"
+        )
+

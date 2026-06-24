@@ -38,29 +38,8 @@ def query_order_status(order_number: str) -> str:
                 "Please verify the order number and try again."
             )
 
-        # Format details into a structured, human-readable response
-        delivery_str = (
-            order.expected_delivery.strftime("%B %d, %Y")
-            if order.expected_delivery
-            else "unknown"
-        )
-        
-        status_emoji = {
-            "Processing": "⏳",
-            "Shipped": "📦",
-            "Out for Delivery": "🚚",
-            "Delivered": "✅",
-            "Cancelled": "❌",
-        }
-        emoji = status_emoji.get(order.status, "ℹ️")
-
-        return (
-            f"Here's the latest info on **{order.order_number}**:\n\n"
-            f"{emoji} **Status:** {order.status}\n"
-            f"👤 **Customer:** {order.customer_name}\n"
-            f"📅 **Expected Delivery:** {delivery_str}\n\n"
-            "Is there anything else I can help you with?"
-        )
+       
+        return order.format_order_response()
     except Exception as e:
         logger.error("Error running query_order_status: %s", e)
         return "An error occurred while searching for the order in our database."

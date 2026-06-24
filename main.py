@@ -24,8 +24,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-
+from schemas.ChatRequest import ChatRequest
 from models import Order
 from agent import stream_agent_response
 from logger import logger 
@@ -67,47 +66,6 @@ def on_startup() -> None:
         seed_database(db)
     finally:
         db.close()
-
-
-# ---------------------------------------------------------------------------
-# Pydantic schemas
-# ---------------------------------------------------------------------------
-class ChatRequest(BaseModel):
-    message: str = Field(
-        ...,
-        min_length=1,
-        max_length=2000,
-        description="The user's chat message.",
-        examples=["Where is my order ORD-00042?"],
-    )
-
-
-# ---------------------------------------------------------------------------
-# Helper: format an order record into a human-readable reply
-# ---------------------------------------------------------------------------
-def _format_order_response(order: Order) -> str:
-    delivery_str = (
-        order.expected_delivery.strftime("%B %d, %Y")
-        if order.expected_delivery
-        else "unknown"
-    )
-
-    status_emoji: dict[str, str] = {
-        "Processing": "⏳",
-        "Shipped": "📦",
-        "Out for Delivery": "🚚",
-        "Delivered": "✅",
-        "Cancelled": "❌",
-    }
-    emoji = status_emoji.get(order.status, "ℹ️")
-
-    return (
-        f"Here's the latest info on **{order.order_number}**:\n\n"
-        f"{emoji} **Status:** {order.status}\n"
-        f"👤 **Customer:** {order.customer_name}\n"
-        f"📅 **Expected Delivery:** {delivery_str}\n\n"
-        f"Is there anything else I can help you with?"
-    )
 
 
 # ---------------------------------------------------------------------------
