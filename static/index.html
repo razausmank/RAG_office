@@ -541,7 +541,7 @@
 
     <!-- ── Quick Chips ──────────────────────────────────────── -->
     <div id="quick-chips" role="list" aria-label="Quick actions">
-      <span class="chip" role="listitem" data-msg="Track my order ORD-00042">📦 Track ORD-00042</span>
+      <span class="chip" role="listitem" data-msg="Track my order 1206573">📦 Track Order 1206573</span>
       <span class="chip" role="listitem" data-msg="What is your return policy?">↩️ Return Policy</span>
       <span class="chip" role="listitem" data-msg="How long does shipping usually take?">🚚 Shipping Times</span>
       <span class="chip" role="listitem" data-msg="I need help with my account">👤 Account Help</span>
@@ -575,7 +575,7 @@
       <div id="input-row">
         <textarea
           id="message-input"
-          placeholder="Type a message… (e.g. 'Where is ORD-00042?')"
+          placeholder="Type a message… (e.g. 'Where is order 1206573?')"
           rows="1"
           aria-label="Message input"
           aria-multiline="true"
@@ -600,6 +600,13 @@
    Config
    ============================================================= */
 const API_ENDPOINT = '/api/chat';
+
+/* =============================================================
+   Conversation identity
+   Generated once per page load so the backend can recall earlier
+   messages in this chat; refreshed when the user clears the chat.
+   ============================================================= */
+let conversationId = crypto.randomUUID();
 
 /* =============================================================
    DOM refs
@@ -750,7 +757,7 @@ async function sendMessage(text) {
     const response = await fetch(API_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: trimmed }),
+      body: JSON.stringify({ message: trimmed, conversation_id: conversationId }),
     });
 
     if (!response.ok) {
@@ -869,6 +876,8 @@ document.querySelectorAll('.chip').forEach((chip) => {
 // Clear conversation
 clearBtn.addEventListener('click', () => {
   if (isStreaming) return;
+  // Start a fresh conversation thread on the backend too
+  conversationId = crypto.randomUUID();
   // Remove all message rows
   messagesContainer.querySelectorAll('.message-row:not(#typing-indicator)').forEach(el => el.remove());
   // Re-insert welcome state

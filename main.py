@@ -6,17 +6,17 @@ FastAPI application entry point.
 Startup behaviour
 -----------------
 1. Creates all DB tables if they don't exist yet.
-2. Seeds the `orders` table with demo data (idempotent – skips if already present).
-3. Mounts the `static/` directory so `index.html` is served at the root URL.
+2. Mounts the `static/` directory so `index.html` is served at the root URL.
+
+The `orders` table itself is populated separately via `import_orders.py`
+from the ERP CSV export (too large to load on every app startup).
 
 Chat endpoint logic  (POST /api/chat)
 --------------------------------------
-1. Regex-scan the user message for an order number:
-      - Explicit format : ORD-XXXXX   (e.g. "ORD-00042")
-      - Bare digits      : 6-8 consecutive digits (e.g. "123456")
-2. If found → query the DB and return a structured plain-text response.
-3. If not found → forward the message to Ollama and stream the reply back via
-   Server-Sent Events (SSE), so the browser can render tokens as they arrive.
+The user message is forwarded as-is to the LangGraph agent (agent.py), which
+decides whether to call the `query_order_status` tool (looking up an order by
+its plain ERP order number, e.g. "1206573") or the FAQ vector-search tool, and
+streams the reply back via Server-Sent Events (SSE).
 """
 
 
@@ -27,8 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from schemas.ChatRequest import ChatRequest
 from models import Order
 from agent import stream_agent_response
-from logger import logger 
-from seed import seed_database
+from logger import logger
 
 
 
@@ -54,19 +53,6 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------------------------
-# Application lifecycle
-# ---------------------------------------------------------------------------
-@app.on_event("startup")
-def on_startup() -> None:
-    """Seed demo data on first run if database is empty."""
-    from database import SessionLocal
-    db = SessionLocal()
-    try:
-        seed_database(db)
-    finally:
-        db.close()
-
 
 # ---------------------------------------------------------------------------
 # Chat endpoint
@@ -85,11 +71,11 @@ async def chat(request: ChatRequest) -> StreamingResponse:
     and streams the response tokens back via Server-Sent Events (SSE).
     """
     user_msg = request.message.strip()
-    logger.info("Received message: %r", user_msg[:120])
+    logger.info("Received message: %r (conversation_id=%s)", user_msg[:120], request.conversation_id)
 
     async def _agent_stream():
         try:
-            async for chunk in stream_agent_response(user_msg):
+            async for chunk in stream_agent_response(user_msg, request.conversation_id):
                 # SSE format: escape literal newlines inside chunk text so SSE framing holds
                 safe_chunk = chunk.replace("\n", "\\n")
                 yield f"data: {safe_chunk}\n\n"

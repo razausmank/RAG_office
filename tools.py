@@ -8,6 +8,8 @@ These tools bridge the LLM with:
 """
 
 import logging
+from sqlalchemy import Integer, cast
+
 from database import SessionLocal
 from models import Order
 from vector_service import query_faq
@@ -20,18 +22,22 @@ logger = logging.getLogger(__name__)
 def query_order_status(order_number: str) -> str:
     """
     Query the SQL database to get the current status and delivery details
-    of a customer order using its canonical ORD-XXXXX number.
+    of a customer order using its ERP order number (plain digits, e.g. 1206573).
     """
     logger.info("Tool executed: query_order_status for %s", order_number)
-    
-    # Normalize order number format (case-insensitive, zero-filled)
-    order_number = order_number.strip().upper()
-    if not order_number.startswith("ORD-") and order_number.isdigit():
-        order_number = f"ORD-{order_number.zfill(5)}"
+
+    order_number = order_number.strip().lstrip("#")
 
     db = SessionLocal()
     try:
-        order = db.query(Order).filter(Order.order_number == order_number).first()
+        # An order number can have multiple suffixes (revisions/releases);
+        # show the latest one.
+        order = (
+            db.query(Order)
+            .filter(Order.order_number == order_number)
+            .order_by(cast(Order.order_suffix, Integer).desc())
+            .first()
+        )
         if not order:
             return (
                 f"I couldn't find any order with the number **{order_number}** in our system. "
