@@ -53,7 +53,17 @@ SYSTEM_PROMPT: str = (
     "brand, manufacturer, dimensions, unit of measure) using its product code.\n"
     "4. Use 'query_faq_store_policy' to search store policies (shipping times, shipping cost, refunds, returns, or password reset).\n\n"
     "When a tool returns information, relay that information to the user in full in your reply — "
-    "do not just say you've already answered or provided the details; restate them.\n"
+    "do not just say you've already answered or provided the details; restate them.\n\n"
+    "Formatting rules for every reply:\n"
+    "- Use **bold** for field labels (e.g., **Status:**, **Total:**), not for whole sentences.\n"
+    "- When presenting more than one item of the same kind (order line items, search results, FAQ points), "
+    "use a numbered or bulleted list with one item per line — never run them together in a paragraph.\n"
+    "- When presenting a single record (one order, one product), list its fields one per line as "
+    "'**Label:** value' rather than a narrative sentence.\n"
+    "- Keep paragraphs short (1-3 sentences) and put a blank line between distinct sections or topics.\n"
+    "- Format money with a currency symbol and thousands separators (e.g. $1,234.56), and dates as Month Day, Year.\n"
+    "- Tool results are raw internal data, not finished sentences — always rephrase them into clean, "
+    "human-readable formatting rather than repeating their field names as-is.\n\n"
     "If you cannot answer the question using the tools, say so honestly and offer to escalate to support."
 )
 
@@ -90,6 +100,20 @@ agent = create_react_agent(
 # ---------------------------------------------------------------------------
 # Streaming Runner
 # ---------------------------------------------------------------------------
+MAX_TOOL_CALL_RETRIES = 3
+
+def _is_malformed_tool_call_error(exc: Exception) -> bool:
+    """
+    Groq's llama-3.3-70b-versatile occasionally emits a malformed, text-based
+    function-call instead of a proper structured tool call (more often as the
+    system prompt grows), which the API rejects outright before any content
+    is generated. It's an intermittent model quirk, not a real failure — a
+    fresh retry of the same request routinely succeeds.
+    """
+    message = str(exc)
+    return "Failed to call a function" in message or "tool call validation failed" in message
+
+
 async def stream_agent_response(user_message: str, thread_id: str) -> AsyncIterator[str]:
     """
     Stream inputs through the LangGraph agent graph. Yields text response tokens
@@ -101,26 +125,45 @@ async def stream_agent_response(user_message: str, thread_id: str) -> AsyncItera
     input_state = {"messages": [("user", user_message)]}
     config = {"configurable": {"thread_id": thread_id}}
 
-    try:
-        # astream_events yields granular lifecycle updates for all nodes in the graph
-        async for event in agent.astream_events(input_state, config, version="v2"):
-            event_type = event["event"]
+    for attempt in range(1, MAX_TOOL_CALL_RETRIES + 1):
+        yielded_anything = False
+        try:
+            # astream_events yields granular lifecycle updates for all nodes in the graph
+            async for event in agent.astream_events(input_state, config, version="v2"):
+                event_type = event["event"]
 
-            # 1. Yield streaming tokens from the LLM chat model
-            if event_type == "on_chat_model_stream":
-                content = event["data"]["chunk"].content
-                if content:
-                    yield content
+                # 1. Yield streaming tokens from the LLM chat model
+                if event_type == "on_chat_model_stream":
+                    content = event["data"]["chunk"].content
+                    if content:
+                        yielded_anything = True
+                        yield content
 
-            # 2. Yield visual feedback when a tool starts running
-            elif event_type == "on_tool_start":
-                tool_name = event["name"]
-                # Map technical tool name to a friendly status message
-                friendly_name = tool_name.replace("_", " ").title()
-                yield f"\n\n*🔍 Checking {friendly_name}...*\n\n"
+                # 2. Yield visual feedback when a tool starts running
+                elif event_type == "on_tool_start":
+                    tool_name = event["name"]
+                    # Map technical tool name to a friendly status message
+                    friendly_name = tool_name.replace("_", " ").title()
+                    yielded_anything = True
+                    yield f"\n\n*🔍 Checking {friendly_name}...*\n\n"
 
-    except Exception as exc:
-        logger.error("Error in LangGraph agent loop: %s", exc)
-        raise RuntimeError(
-            "The assistant encountered an error. Please try again later."
-        ) from exc
+            return
+
+        except Exception as exc:
+            # This error surfaces before any content is generated, so retrying
+            # is safe — nothing has been shown to the user yet for this turn.
+            if (
+                not yielded_anything
+                and _is_malformed_tool_call_error(exc)
+                and attempt < MAX_TOOL_CALL_RETRIES
+            ):
+                logger.warning(
+                    "Malformed tool call from model (attempt %d/%d), retrying: %s",
+                    attempt, MAX_TOOL_CALL_RETRIES, exc,
+                )
+                continue
+
+            logger.error("Error in LangGraph agent loop: %s", exc)
+            raise RuntimeError(
+                "The assistant encountered an error. Please try again later."
+            ) from exc
