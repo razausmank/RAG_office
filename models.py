@@ -7,7 +7,16 @@ so that `Base.metadata.create_all(engine)` will create every table in one call.
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKeyConstraint, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    Date,
+    DateTime,
+    ForeignKeyConstraint,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -227,5 +236,109 @@ class OrderLine(Base):
                 f"quantity_shipped: {self.quantity_shipped}",
                 f"unit_price: {self.unit_price}",
                 f"line_total: {self.line_total}",
+            ]
+        )
+
+
+class Product(Base):
+    """
+    A product/item master record, sourced from the ERP's ICSP export.
+
+    The ERP export has ~180 internal columns; this keeps only the fields
+    useful for answering customer/catalog questions (what is it, what
+    category/unit/dimensions, is it active).
+
+    Unique per (company_no, product_code): the same product code can exist
+    as a distinct record under a different company in this multi-company ERP.
+
+    Column widths here are deliberately generous rather than matching the
+    ERP data dictionary's declared lengths: real data was found to exceed
+    the documented length for several fields (e.g. `prod` is documented as
+    x(24) but real values run to 29 chars), so declared lengths aren't
+    trustworthy as hard limits — see the OrderLine.taken_by truncation bug
+    for why this matters.
+    """
+
+    __tablename__ = "products"
+    __table_args__ = (
+        UniqueConstraint("company_no", "product_code", name="uq_product_company_code"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+
+    # ERP source row identity
+    row_pointer: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+
+    # Identity
+    company_no: Mapped[str] = mapped_column(String(5), nullable=False)
+    product_code: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    lookup_name: Mapped[str] = mapped_column(String(60), nullable=True)
+
+    # Description
+    description_1: Mapped[str] = mapped_column(String(60), nullable=True)
+    description_2: Mapped[str] = mapped_column(String(60), nullable=True)
+    description_extended: Mapped[str] = mapped_column(Text, nullable=True)
+
+    # Classification (raw ERP codes)
+    category: Mapped[str] = mapped_column(String(10), nullable=True)
+    product_type: Mapped[str] = mapped_column(String(5), nullable=True)
+    status_code: Mapped[str] = mapped_column(String(5), nullable=True)
+    brand_code: Mapped[str] = mapped_column(String(10), nullable=True)
+
+    # Manufacturer / model
+    manufacturer_product: Mapped[str] = mapped_column(String(60), nullable=True)
+    model_code: Mapped[str] = mapped_column(String(30), nullable=True)
+
+    # Units of measure
+    stocking_unit: Mapped[str] = mapped_column(String(10), nullable=True)
+    selling_unit: Mapped[str] = mapped_column(String(10), nullable=True)
+    counting_unit: Mapped[str] = mapped_column(String(10), nullable=True)
+
+    # Physical dimensions
+    weight: Mapped[float] = mapped_column(Numeric(14, 5), nullable=True)
+    height: Mapped[float] = mapped_column(Numeric(14, 5), nullable=True)
+    width: Mapped[float] = mapped_column(Numeric(14, 5), nullable=True)
+    length: Mapped[float] = mapped_column(Numeric(14, 5), nullable=True)
+    cubes: Mapped[float] = mapped_column(Numeric(14, 5), nullable=True)
+
+    # Trade / compliance
+    country_of_origin: Mapped[str] = mapped_column(String(5), nullable=True)
+    warranty_type: Mapped[str] = mapped_column(String(5), nullable=True)
+    warranty_length: Mapped[int] = mapped_column(Integer, nullable=True)
+    tariff_code: Mapped[str] = mapped_column(String(20), nullable=True)
+    unspsc: Mapped[str] = mapped_column(String(20), nullable=True)
+
+    # Dates
+    entered_date: Mapped[date] = mapped_column(Date, nullable=True)
+    last_change_date: Mapped[date] = mapped_column(Date, nullable=True)
+
+    # ERP audit trail
+    source_synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    erp_created_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    erp_modified_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return (
+            f"<Product company_no={self.company_no!r} "
+            f"product_code={self.product_code!r} status_code={self.status_code!r}>"
+        )
+
+    def format_product_response(self) -> str:
+        """Plain labeled facts (see Order.format_order_response for why)."""
+        description = " ".join(p for p in [self.description_1, self.description_2] if p)
+        return "\n".join(
+            [
+                f"product_code: {self.product_code}",
+                f"description: {description or 'unknown'}",
+                f"category: {self.category or 'n/a'}",
+                f"product_type: {self.product_type or 'n/a'}",
+                f"status_code: {self.status_code or 'n/a'}",
+                f"brand_code: {self.brand_code or 'n/a'}",
+                f"manufacturer_product: {self.manufacturer_product or 'n/a'}",
+                f"stocking_unit: {self.stocking_unit or 'n/a'}",
+                f"selling_unit: {self.selling_unit or 'n/a'}",
+                f"weight: {self.weight}",
+                f"dimensions_lwh: {self.length}x{self.width}x{self.height}",
+                f"country_of_origin: {self.country_of_origin or 'n/a'}",
             ]
         )

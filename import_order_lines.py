@@ -78,16 +78,24 @@ CHUNK_SIZE = 50_000
 def _dedupe_latest(csv_path: str) -> dict:
     """Pass 1: keep only the highest-VariationId row per (orderno, ordersuf, lineno)."""
     winners: dict[tuple[str, str, str], tuple[int, list]] = {}
+    skipped = 0
 
     with open(csv_path, encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
         header = next(reader)
+        expected_cols = len(header)
         idx = {name: i for i, name in enumerate(header)}
         variation_idx = idx["VariationId"]
         key_idx = (idx["orderno"], idx["ordersuf"], idx["lineno"])
         source_idx = [idx[csv_col] for _, csv_col, _ in COLUMN_MAP]
 
         for row in reader:
+            # A truncated/interrupted export can leave a short last row; skip
+            # rather than crash on the missing columns.
+            if len(row) != expected_cols:
+                skipped += 1
+                continue
+
             key = (row[key_idx[0]], row[key_idx[1]], row[key_idx[2]])
             try:
                 variation_id = int(row[variation_idx])
@@ -99,6 +107,9 @@ def _dedupe_latest(csv_path: str) -> dict:
                 continue
 
             winners[key] = (variation_id, [row[i] for i in source_idx])
+
+    if skipped:
+        print(f"  skipped {skipped:,} malformed row(s) (wrong column count).")
 
     return winners
 
@@ -123,6 +134,25 @@ def import_order_lines(csv_path: str) -> None:
     conn = psycopg2.connect(DATABASE_URL)
     try:
         with conn.cursor() as cur:
+            # order_lines has a composite FK into orders; a line whose order
+            # isn't present would abort the whole COPY, so filter those out
+            # up front rather than let the load fail partway through.
+            cur.execute("SELECT order_number, order_suffix FROM orders")
+            valid_orders = set(cur.fetchall())
+
+            before = len(winners)
+            winners = {
+                key: value
+                for key, value in winners.items()
+                if (key[0], key[1]) in valid_orders
+            }
+            skipped_fk = before - len(winners)
+            if skipped_fk:
+                print(
+                    f"  skipped {skipped_fk:,} line(s) referencing an order not "
+                    "present in the orders table."
+                )
+
             print("Truncating order_lines table...")
             cur.execute("TRUNCATE TABLE order_lines RESTART IDENTITY")
 
