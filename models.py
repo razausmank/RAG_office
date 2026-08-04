@@ -7,8 +7,8 @@ so that `Base.metadata.create_all(engine)` will create every table in one call.
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Numeric, String, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Date, DateTime, ForeignKeyConstraint, Numeric, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 
@@ -91,6 +91,10 @@ class Order(Base):
     erp_created_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     erp_modified_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
+    lines: Mapped[list["OrderLine"]] = relationship(
+        back_populates="order", cascade="all, delete-orphan"
+    )
+
     def __repr__(self) -> str:
         return (
             f"<Order id={self.id} order_number={self.order_number!r} "
@@ -137,5 +141,91 @@ class Order(Base):
                 f"customer_name: {self.customer_name or 'unknown'}",
                 f"promised_delivery: {promised_str}",
                 f"delivery_address: {address}",
+            ]
+        )
+
+
+class OrderLine(Base):
+    """
+    A single product line on an order, sourced from the ERP's OEEL
+    (order-entry line) export. Joins back to `Order` via
+    (order_number, order_suffix), matching that table's unique constraint.
+    """
+
+    __tablename__ = "order_lines"
+    __table_args__ = (
+        UniqueConstraint(
+            "order_number", "order_suffix", "line_number", name="uq_order_line"
+        ),
+        ForeignKeyConstraint(
+            ["order_number", "order_suffix"],
+            ["orders.order_number", "orders.order_suffix"],
+            name="fk_order_lines_order",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+
+    # ERP source row identity (used to make CSV re-imports idempotent).
+    row_pointer: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+
+    # Order identity (FK to orders)
+    order_number: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    order_suffix: Mapped[str] = mapped_column(String(5), nullable=False, default="0")
+    line_number: Mapped[str] = mapped_column(String(10), nullable=False)
+
+    # Product
+    product_code: Mapped[str] = mapped_column(String(50), nullable=True)
+    product_category: Mapped[str] = mapped_column(String(10), nullable=True)
+    product_line: Mapped[str] = mapped_column(String(50), nullable=True)
+    unit: Mapped[str] = mapped_column(String(10), nullable=True)
+
+    # Quantities / pricing
+    quantity_ordered: Mapped[float] = mapped_column(Numeric(12, 2), nullable=True)
+    quantity_shipped: Mapped[float] = mapped_column(Numeric(12, 2), nullable=True)
+    unit_price: Mapped[float] = mapped_column(Numeric(14, 2), nullable=True)
+    unit_cost: Mapped[float] = mapped_column(Numeric(14, 2), nullable=True)
+    line_total: Mapped[float] = mapped_column(Numeric(14, 2), nullable=True)
+
+    # Classification (raw ERP codes)
+    status_type: Mapped[str] = mapped_column(String(5), nullable=True)
+    transaction_type: Mapped[str] = mapped_column(String(10), nullable=True)
+
+    # Fulfillment
+    warehouse: Mapped[str] = mapped_column(String(10), nullable=True)
+    sales_rep_in: Mapped[str] = mapped_column(String(10), nullable=True)
+    sales_territory: Mapped[str] = mapped_column(String(10), nullable=True)
+
+    # Dates
+    entered_date: Mapped[date] = mapped_column(Date, nullable=True)
+    promised_date: Mapped[date] = mapped_column(Date, nullable=True)
+    requested_ship_date: Mapped[date] = mapped_column(Date, nullable=True)
+    invoice_date: Mapped[date] = mapped_column(Date, nullable=True)
+    cancel_date: Mapped[date] = mapped_column(Date, nullable=True)
+
+    # ERP audit trail
+    source_synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    erp_created_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    erp_modified_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+    order: Mapped["Order"] = relationship(back_populates="lines")
+
+    def __repr__(self) -> str:
+        return (
+            f"<OrderLine order_number={self.order_number!r} "
+            f"line_number={self.line_number!r} product_code={self.product_code!r}>"
+        )
+
+    def format_line_response(self) -> str:
+        """Plain labeled facts (see Order.format_order_response for why)."""
+        return "\n".join(
+            [
+                f"line_number: {self.line_number}",
+                f"product_code: {self.product_code or 'unknown'}",
+                f"product_category: {self.product_category or 'n/a'}",
+                f"quantity_ordered: {self.quantity_ordered}",
+                f"quantity_shipped: {self.quantity_shipped}",
+                f"unit_price: {self.unit_price}",
+                f"line_total: {self.line_total}",
             ]
         )

@@ -11,10 +11,21 @@ import logging
 from sqlalchemy import Integer, cast
 
 from database import SessionLocal
-from models import Order
+from models import Order, OrderLine
 from vector_service import query_faq
 
 logger = logging.getLogger(__name__)
+
+
+def _get_latest_order(db, order_number: str) -> Order | None:
+    """An order number can have multiple suffixes (revisions/releases); return the latest."""
+    return (
+        db.query(Order)
+        .filter(Order.order_number == order_number)
+        .order_by(cast(Order.order_suffix, Integer).desc())
+        .first()
+    )
+
 
 # ---------------------------------------------------------------------------
 # Tool 1: SQL Database Query
@@ -30,21 +41,13 @@ def query_order_status(order_number: str) -> str:
 
     db = SessionLocal()
     try:
-        # An order number can have multiple suffixes (revisions/releases);
-        # show the latest one.
-        order = (
-            db.query(Order)
-            .filter(Order.order_number == order_number)
-            .order_by(cast(Order.order_suffix, Integer).desc())
-            .first()
-        )
+        order = _get_latest_order(db, order_number)
         if not order:
             return (
                 f"I couldn't find any order with the number **{order_number}** in our system. "
                 "Please verify the order number and try again."
             )
 
-       
         return order.format_order_response()
     except Exception as e:
         logger.error("Error running query_order_status: %s", e)
@@ -54,7 +57,53 @@ def query_order_status(order_number: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool 2: Semantic FAQ Vector Query
+# Tool 2: SQL Database Query — order line items
+# ---------------------------------------------------------------------------
+def query_order_items(order_number: str) -> str:
+    """
+    Query the SQL database for the list of products/line items on a customer's
+    order (quantities, prices, line totals) using its ERP order number
+    (plain digits, e.g. 8060622).
+    """
+    logger.info("Tool executed: query_order_items for %s", order_number)
+
+    order_number = order_number.strip().lstrip("#")
+
+    db = SessionLocal()
+    try:
+        order = _get_latest_order(db, order_number)
+        if not order:
+            return (
+                f"I couldn't find any order with the number **{order_number}** in our system. "
+                "Please verify the order number and try again."
+            )
+
+        lines = (
+            db.query(OrderLine)
+            .filter(
+                OrderLine.order_number == order.order_number,
+                OrderLine.order_suffix == order.order_suffix,
+            )
+            .order_by(cast(OrderLine.line_number, Integer))
+            .all()
+        )
+        if not lines:
+            return f"order_number: {order.order_number}\nline_items: none on file"
+
+        parts = [f"order_number: {order.order_number}", f"line_item_count: {len(lines)}"]
+        for line in lines:
+            parts.append("---")
+            parts.append(line.format_line_response())
+        return "\n".join(parts)
+    except Exception as e:
+        logger.error("Error running query_order_items: %s", e)
+        return "An error occurred while searching for the order's line items in our database."
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool 3: Semantic FAQ Vector Query
 # ---------------------------------------------------------------------------
 def query_faq_store_policy(user_query: str) -> str:
     """

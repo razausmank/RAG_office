@@ -15,7 +15,7 @@ from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
-from tools import query_order_status, query_faq_store_policy
+from tools import query_order_status, query_order_items, query_faq_store_policy
 
 load_dotenv()
 
@@ -42,7 +42,9 @@ SYSTEM_PROMPT: str = (
     "You have access to the following tools:\n"
     "1. Use 'query_order_status' to lookup status, expected delivery, and details of a customer's order. "
     "Always ask for the order number (e.g., 1206573) if the user is asking about their order but didn't provide one.\n"
-    "2. Use 'query_faq_store_policy' to search store policies (shipping times, shipping cost, refunds, returns, or password reset).\n\n"
+    "2. Use 'query_order_items' to lookup the specific products/line items on a customer's order "
+    "(product codes, quantities ordered/shipped, prices, line totals). Also requires the order number.\n"
+    "3. Use 'query_faq_store_policy' to search store policies (shipping times, shipping cost, refunds, returns, or password reset).\n\n"
     "When a tool returns information, relay that information to the user in full in your reply — "
     "do not just say you've already answered or provided the details; restate them.\n"
     "If you cannot answer the question using the tools, say so honestly and offer to escalate to support."
@@ -61,7 +63,7 @@ llm = ChatGroq(
 )
 
 # List of tools available to the agent
-tools = [query_order_status, query_faq_store_policy]
+tools = [query_order_status, query_order_items, query_faq_store_policy]
 
 # In-memory conversation store, keyed by thread_id (one per browser chat
 # session). State is lost on restart and isn't shared across worker

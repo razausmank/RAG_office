@@ -154,8 +154,12 @@ def import_orders(csv_path: str) -> None:
     conn = psycopg2.connect(DATABASE_URL)
     try:
         with conn.cursor() as cur:
-            print("Truncating orders table...")
-            cur.execute("TRUNCATE TABLE orders RESTART IDENTITY")
+            # order_lines has a composite FK into orders, so both must be
+            # truncated together (Postgres refuses to truncate a table that's
+            # FK-referenced unless the referencing table is truncated too).
+            # Re-run import_order_lines.py afterward to reload line items.
+            print("Truncating orders (and dependent order_lines) table...")
+            cur.execute("TRUNCATE TABLE orders, order_lines RESTART IDENTITY")
 
             copy_sql = (
                 f"COPY orders ({', '.join(TABLE_COLUMNS)}) "
